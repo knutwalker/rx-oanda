@@ -26,7 +26,72 @@ import akka.http.scaladsl.model.headers._
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.Flow
 
+import scala.annotation.implicitNotFound
 import scala.util.Try
+
+case class OandaEnv[A <: OandaEnv.Auth](
+  name: String,
+  apiEndpoint: String,
+  streamEndpoint: String
+)
+object OandaEnv {
+
+
+  implicit final class OandaEnvOps[A <: Auth](private val env: OandaEnv[A]) extends AnyVal {
+
+    def headers(implicit ev: A requires NoAuth) =
+      OandaConn.headers(ev(env))
+
+    def headers(token: String)(implicit ev: A requires WithAuth) =
+      OandaConn.headers(token, ev(env))
+
+  }
+
+
+  val SandboxEnvironment =
+    OandaEnv[NoAuth]("Sandbox", "api-sandbox.oanda.com", "stream-sandbox.oanda.com")
+
+  val TradePracticeEnvironment =
+    OandaEnv[WithAuth]("fxTrade Practice", "api-fxpractice.oanda.com", "stream-fxpractice.oanda.com")
+
+  val TradeEnvironment =
+    OandaEnv[WithAuth]("fxTrade", "api-fxtrade.oanda.com", "stream-fxtrade.oanda.com")
+
+
+  sealed trait Auth
+  sealed trait NoAuth extends Auth
+  sealed trait WithAuth extends Auth
+
+
+  @implicitNotFound("Nonono, ${T} requires to be ${A}")
+  sealed trait requires[T <: Auth, A <: Auth] {
+    def apply(x: OandaEnv[T]): OandaEnv[A]
+  }
+  object requires {
+
+    implicit val requiresNoAuth: requires[NoAuth, NoAuth] =
+      new requires[NoAuth, NoAuth] {
+        def apply(x: OandaEnv[NoAuth]): OandaEnv[NoAuth] = x
+      }
+    implicit val requiresWithAuth: requires[WithAuth, WithAuth] =
+      new requires[WithAuth, WithAuth] {
+        def apply(x: OandaEnv[WithAuth]): OandaEnv[WithAuth] = x
+      }
+  }
+}
+
+
+object OandaConn {
+
+  val unixTime: RawHeader = RawHeader("X-Accept-Datetime-Format", "UNIX")
+  val gzipEncoding = `Accept-Encoding`(HttpEncodings.gzip)
+
+  def headers(token: String, env: OandaEnv[OandaEnv.WithAuth]) =
+    unixTime :: gzipEncoding :: Authorization(OAuth2BearerToken(token)) :: Nil
+
+  def headers(env: OandaEnv[OandaEnv.NoAuth]) =
+    unixTime :: gzipEncoding :: Nil
+}
 
 sealed trait OandaEnvironment {
   def name: String
